@@ -18,6 +18,7 @@ class SourceType(str, Enum):
     TXT = "txt"
     YOUTUBE = "youtube"
     GOOGLE_DRIVE = "google_drive"
+    WEB = "web"
 
 
 class ContentType(str, Enum):
