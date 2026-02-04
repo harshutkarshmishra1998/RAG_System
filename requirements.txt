@@ -1,0 +1,49 @@
+# ===========================
+# Core utilities
+# ===========================
+requests==2.31.0
+tqdm==4.66.1
+regex==2023.12.25
+pydantic==2.6.1
+
+# ===========================
+# File type detection
+# ===========================
+python-magic==0.4.27
+
+# ===========================
+# PDF ingestion
+# ===========================
+pdfplumber==0.11.4
+pdf2image==1.17.0
+pytesseract==0.3.10
+Pillow==10.2.0
+
+# ===========================
+# PDF table extraction
+# ===========================
+camelot-py==0.11.0
+opencv-python==4.9.0.80
+
+# ===========================
+# DOCX ingestion
+# ===========================
+python-docx==1.1.0
+
+# ===========================
+# YouTube transcripts
+# ===========================
+youtube-transcript-api==0.6.2
+
+# ===========================
+# Google Drive ingestion
+# ===========================
+google-api-python-client==2.116.0
+google-auth==2.28.1
+google-auth-oauthlib==1.2.0
+
+# ===========================
+# Optional HTML cleanup
+# ===========================
+beautifulsoup4==4.12.3
+lxml==5.1.0
