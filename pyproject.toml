@@ -33,4 +33,11 @@ dependencies = [
     "charset-normalizer>=3.3.0",
     "pytest>=8.0.0",
     "pytest-mock>=3.12.0",
+    "faiss-cpu>=1.8.0",
+    "rank-bm25>=0.2.2",
+]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:.*SwigPy.*:DeprecationWarning",
 ]

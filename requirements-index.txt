@@ -1,0 +1,7 @@
+# =========================
+# Phase-4: Vector Indexing
+# =========================
+faiss-cpu>=1.8.0
+
+# Optional: Hybrid search (Phase-4.3+)
+rank-bm25>=0.2.2
