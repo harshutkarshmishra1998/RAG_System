@@ -1,0 +1,386 @@
+from pathlib import Path
+from dotenv import load_dotenv
+
+# --------------------------------------------------
+# Project setup
+# --------------------------------------------------
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(PROJECT_ROOT / ".env")
+
+VECTOR_STORE_PATH = PROJECT_ROOT / "vector_store" / "faiss" / "index"
+
+# --------------------------------------------------
+# Phase-1
+# --------------------------------------------------
+from schema.ingest_router import ingest
+
+# --------------------------------------------------
+# Phase-2
+# --------------------------------------------------
+from clean_normalize.phase2_pipeline import (
+    run_phase_2_1_canonical_text_sanitation,
+    run_phase_2_2_structural_block_segmentation,
+    run_phase_2_3_boilerplate_detection_suppression,
+    run_phase_2_4_table_normalization,
+    run_phase_2_5_metadata_canonicalization,
+    run_phase_2_6_deterministic_ordering_hashing,
+)
+
+# --------------------------------------------------
+# Phase-3
+# --------------------------------------------------
+from chunking.phase3_pipeline import (
+    run_phase_3_2_block_aware_chunking,
+    run_phase_3_3_adaptive_chunk_assembly,
+    run_phase_3_4_chunk_metadata_finalization,
+)
+
+# --------------------------------------------------
+# Phase-5.0
+# --------------------------------------------------
+from embeddings.embedding_spec import EmbeddingModelSpec
+from embeddings.embedding_cache import EmbeddingCache
+from embeddings.embedding_pipeline import embed_chunks
+
+# --------------------------------------------------
+# Phase-5.1
+# --------------------------------------------------
+from indexing.faiss_index import FaissIndex
+from indexing.phase5_1_faiss_pipeline import run_phase_5_1_faiss_insertion
+
+# --------------------------------------------------
+# Phase-5.2
+# --------------------------------------------------
+from retrieval.phase5_2_retrieval import run_phase_5_2_retrieval
+
+# --------------------------------------------------
+# Phase-5.3
+# --------------------------------------------------
+from retrieval.phase5_3_calibration import run_phase_5_3_calibration
+
+# --------------------------------------------------
+# Phase-5.4 → Phase-6.1 Bridge
+# --------------------------------------------------
+from context_assembly.bridge import build_retrieval_envelope
+from context_assembly.normalize import normalize_envelope
+
+# --------------------------------------------------
+# Phase-6.2
+# --------------------------------------------------
+from context_assembly.rerank import rerank_chunks_phase_6_2
+
+# --------------------------------------------------
+# Phase-6.3
+# --------------------------------------------------
+from context_assembly.assemble import assemble_context_phase_6_3
+
+# --------------------------------------------------
+# Phase-6.4 & Phase-6.5
+# --------------------------------------------------
+from context_assembly.token_budget import enforce_token_budget_phase_6_4
+from context_assembly.package import package_context_phase_6_5
+
+
+
+def _run_phase1_to_phase3(input_value):
+    doc = ingest(input_value)
+
+    doc = run_phase_2_1_canonical_text_sanitation(doc)
+    doc = run_phase_2_2_structural_block_segmentation(doc)
+    doc = run_phase_2_3_boilerplate_detection_suppression(doc)
+    doc = run_phase_2_4_table_normalization(doc)
+    doc = run_phase_2_5_metadata_canonicalization(doc)
+    doc = run_phase_2_6_deterministic_ordering_hashing(doc)
+
+    chunks = run_phase_3_2_block_aware_chunking(doc)
+    chunks = run_phase_3_3_adaptive_chunk_assembly(chunks)
+    chunks = run_phase_3_4_chunk_metadata_finalization(chunks)
+
+    return doc, chunks
+
+
+def test_phase1_to_phase5_4_all_sources_e2e():
+    tests = [
+        # PROJECT_ROOT / "test" / "test.pdf",
+        PROJECT_ROOT / "test" / "test.docx",
+        # PROJECT_ROOT / "test" / "test.txt",
+        # "https://www.youtube.com/watch?v=sDv4f4s2SB8",
+        # "https://en.wikipedia.org/wiki/Gradient_descent",
+        # "https://docs.google.com/document/d/1Z-E-_Ab_F98Wy6bwfGawy3RIYKjm1kq0/edit",
+    ]
+
+    model = EmbeddingModelSpec(
+        model_id="sentence-transformers/all-MiniLM-L6-v2",
+        dimension=384,
+        provider="local",
+    )
+
+    # --------------------------------------------------
+    # Phase-5.1 — ONE shared FAISS index
+    # --------------------------------------------------
+    index = FaissIndex(dimension=model.dimension)
+
+    all_chunks = []
+
+    for input_value in tests:
+        print("\n================ INGEST =================")
+        print(f"Source: {input_value}")
+
+        _, chunks = _run_phase1_to_phase3(input_value)
+        assert chunks, "Chunks must not be empty"
+
+        cache = EmbeddingCache()
+        embeddings = embed_chunks(chunks, model, cache)
+
+        run_phase_5_1_faiss_insertion(
+            chunks=chunks,
+            embeddings=embeddings,
+            index=index,
+        )
+
+        all_chunks.extend(chunks)
+
+        print(f"Chunks added      : {len(chunks)}")
+        print(f"Total vectors now: {index.index.ntotal}")
+
+    # --------------------------------------------------
+    # Phase-5.4 — Persist FAISS ONCE
+    # --------------------------------------------------
+    VECTOR_STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    index.persist(str(VECTOR_STORE_PATH))
+
+    assert VECTOR_STORE_PATH.with_suffix(".faiss").exists()
+    assert VECTOR_STORE_PATH.with_suffix(".meta").exists()
+
+    # --------------------------------------------------
+    # Phase-5.4 — Load FAISS into a NEW object
+    # --------------------------------------------------
+    loaded_index = FaissIndex(dimension=model.dimension)
+    loaded_index.load(str(VECTOR_STORE_PATH))
+
+    assert loaded_index.index.ntotal == index.index.ntotal
+
+    chunks_by_embedding_id = {
+        c.metadata["embedding_id"]: c for c in all_chunks
+    }
+
+    # --------------------------------------------------
+    # Phase-5.2 — Retrieval (from persisted index)
+    # --------------------------------------------------
+    retrieval = run_phase_5_2_retrieval(
+        query="MCP",
+        index=loaded_index,
+        chunks_by_embedding_id=chunks_by_embedding_id,
+        model_id=model.model_id,
+        k=5,
+    )
+
+    # --------------------------------------------------
+    # DEBUG — Raw retrieval visibility
+    # --------------------------------------------------
+    print("\n================ PHASE 5.2 DEBUG =================")
+    print(f"Retrieval status       : {retrieval.status}")
+    print(f"Raw chunks returned    : {len(retrieval.results)}")
+
+    if retrieval.results:
+        print("Scores:")
+        for r in retrieval.results:
+            print(f"  chunk_id={r.chunk_id} score={r.score:.4f}")
+
+
+    # --------------------------------------------------
+    # Phase-5.3 — Calibration
+    # --------------------------------------------------
+    diagnostics = run_phase_5_3_calibration(retrieval)
+
+    # --------------------------------------------------
+    # Contract assertions
+    # --------------------------------------------------
+    assert diagnostics.confidence in {"high", "medium", "low", "empty"}
+    assert diagnostics.phase5_2_status == retrieval.status
+    assert diagnostics.num_results >= 0
+    assert diagnostics.top_score >= 0.0
+    assert diagnostics.mean_score >= 0.0
+    assert diagnostics.score_spread >= 0.0
+
+    print("\n================ FINAL =================")
+    print(f"Total documents : {len(set(c.metadata['document_id'] for c in all_chunks))}")
+    print(f"Total chunks    : {len(all_chunks)}")
+    print(f"Total vectors   : {loaded_index.index.ntotal}")
+
+    # --------------------------------------------------
+    # Phase-5.4 → Phase-6.1 — Bridge
+    # --------------------------------------------------
+    envelope = build_retrieval_envelope(
+        retrieval=retrieval,
+        diagnostics=diagnostics,
+    )
+
+    assert envelope.confidence == diagnostics.confidence
+    assert envelope.status == retrieval.status
+    assert len(envelope.chunks) == diagnostics.num_results
+
+    # --------------------------------------------------
+    # Phase-6.1 — Normalization
+    # --------------------------------------------------
+    normalized = normalize_envelope(envelope)
+
+    # --------------------------------------------------
+    # Phase-6.1 assertions
+    # --------------------------------------------------
+    assert normalized["confidence"] == diagnostics.confidence
+    assert normalized["status"] == retrieval.status
+    assert len(normalized["chunks"]) == diagnostics.num_results
+
+    for raw, norm in zip(envelope.chunks, normalized["chunks"]):
+        # Identity
+        assert norm["chunk_id"] == raw.chunk_id
+        assert norm["embedding_id"] == raw.embedding_id
+        assert norm["document_id"] == raw.document_id
+
+        # TEXT MUST NOT CHANGE
+        assert norm["text"] == raw.text
+
+        # Score preserved
+        assert norm["score"] == raw.score
+
+        # Derived fields
+        assert norm["length_chars"] == len(raw.text)
+        assert norm["length_tokens"] > 0
+    
+    print("\n================ PHASE 6.1 =================")
+    print(f"Query       : {normalized['query']}")
+    print(f"Confidence  : {normalized['confidence']}")
+    print(f"Top score   : {diagnostics.top_score}")
+    print(f"Mean score  : {diagnostics.mean_score}")
+    print(f"Spread      : {diagnostics.score_spread}")
+    print(f"Num chunks  : {len(normalized['chunks'])}")
+
+    for i, c in enumerate(normalized["chunks"], 1):
+        print(f"\n--- Chunk {i} ---")
+        print(f"Chunk ID : {c['chunk_id']}")
+        print(f"Score    : {c['score']}")
+        print(f"Text     : {c['text'][:300]}...")
+
+    # --------------------------------------------------
+    # Phase-6.2 — Reranking
+    # --------------------------------------------------
+    reranked = rerank_chunks_phase_6_2(normalized)
+
+    reranked_chunks = reranked["reranked_chunks"]
+
+    # --------------------------------------------------
+    # Phase-6.2 assertions
+    # --------------------------------------------------
+    assert len(reranked_chunks) == len(normalized["chunks"])
+
+    # Identity preserved
+    assert {
+        c["chunk_id"] for c in reranked_chunks
+    } == {
+        c["chunk_id"] for c in normalized["chunks"]
+    }
+
+    # Scores must not change
+    for before, after in zip(
+        sorted(normalized["chunks"], key=lambda x: x["chunk_id"]),
+        sorted(reranked_chunks, key=lambda x: x["chunk_id"]),
+    ):
+        assert before["score"] == after["score"]
+
+    print("\n================ PHASE 6.2 =================")
+    for i, c in enumerate(reranked_chunks, 1):
+        print(f"\n--- Reranked Chunk {i} ---")
+        print(f"Chunk ID : {c['chunk_id']}")
+        print(f"Score    : {c['score']}")
+        print(f"Text     : {c['text'][:300]}...")
+
+    # --------------------------------------------------
+    # Phase-6.3 — Context Assembly
+    # --------------------------------------------------
+    assembled = assemble_context_phase_6_3(
+        normalized=normalized,
+        reranked=reranked,
+        max_tokens=600,   # intentionally small to test trimming
+    )
+
+    context_chunks = assembled["context_chunks"]
+
+    # ----------------------------
+    # Phase-6.3 assertions
+    # ----------------------------
+    assert assembled["context_mode"] in {"normal", "degraded", "empty"}
+    assert assembled["context_tokens"] <= 600
+
+    # Identity preserved: context ⊆ reranked
+    reranked_ids = {c["chunk_id"] for c in reranked["reranked_chunks"]}
+    context_ids = {c["chunk_id"] for c in context_chunks}
+    assert context_ids.issubset(reranked_ids)
+
+    # No text mutation
+    for c in context_chunks:
+        assert isinstance(c["text"], str) and len(c["text"]) > 0
+
+    # Token accounting is consistent
+    assert assembled["context_tokens"] == sum(
+        c["length_tokens"] for c in context_chunks
+    )
+
+    print("\n================ PHASE 6.3 =================")
+    print(f"Context mode   : {assembled['context_mode']}")
+    print(f"Token budget   : 600")
+    print(f"Used tokens    : {assembled['context_tokens']}")
+    print(f"Chunks kept    : {len(context_chunks)}")
+    print(f"Chunks dropped : {len(assembled['assembly_metadata']['dropped'])}")
+
+    for i, c in enumerate(context_chunks, 1):
+        print(f"\n--- Context Chunk {i} ---")
+        print(f"Chunk ID : {c['chunk_id']}")
+        print(f"Score    : {c['score']}")
+        print(f"Tokens   : {c['length_tokens']}")
+        print(f"Text     : {c['text'][:300]}...")
+
+    # --------------------------------------------------
+    # Phase-6.4 — Token Budget Enforcement
+    # --------------------------------------------------
+    budgeted = enforce_token_budget_phase_6_4(
+        assembled=assembled,
+        max_tokens=500,
+    )
+
+    assert budgeted["final_tokens"] <= 500
+    assert all(
+        c["length_tokens"] > 0 for c in budgeted["final_chunks"]
+    )
+
+    print("\n================ PHASE 6.4 =================")
+    print(f"Max tokens    : 500")
+    print(f"Used tokens   : {budgeted['final_tokens']}")
+    print(f"Chunks kept   : {len(budgeted['final_chunks'])}")
+    print(f"Chunks trimmed: {len(budgeted['budget_metadata']['trimmed'])}")
+
+    # --------------------------------------------------
+    # Phase-6.5 — Context Packaging
+    # --------------------------------------------------
+    packaged = package_context_phase_6_5(
+        budgeted=budgeted,
+    )
+
+    # ----------------------------
+    # Phase-6.5 assertions
+    # ----------------------------
+    assert isinstance(packaged["context_text"], str)
+    assert packaged["context_tokens"] == budgeted["final_tokens"]
+    assert packaged["packaging_metadata"]["num_chunks"] == len(
+        budgeted["final_chunks"]
+    )
+
+    for c in budgeted["final_chunks"]:
+        assert c["text"] in packaged["context_text"]
+
+    print("\n================ PHASE 6.5 =================")
+    print(f"Context tokens : {packaged['context_tokens']}")
+    print(f"Chunks packed  : {packaged['packaging_metadata']['num_chunks']}")
+    print("\n--- CONTEXT PREVIEW ---")
+    print(packaged["context_text"][:1000])
+
