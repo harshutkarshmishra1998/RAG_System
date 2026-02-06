@@ -1,3 +1,9 @@
+#faiss_index.py
+
+import json
+import os
+from pathlib import Path
+
 import faiss
 import numpy as np
 from typing import List, Dict, Any
@@ -134,3 +140,20 @@ class FaissIndex(IndexBackend):
                 raise ValueError(f"Unsupported filter key: {key}")
 
         return True
+    
+    # --------------------------------------------------
+    # Phase-5.4 — Observability helpers
+    # --------------------------------------------------
+    def size(self) -> int:
+        return self.index.ntotal
+
+    def document_counts(self) -> Dict[str, int]:
+        counts: Dict[str, int] = {}
+        for chunk in self.store.embedding_id_to_chunk.values():
+            doc_id = chunk.metadata.get("document_id")
+            counts[doc_id] = counts.get(doc_id, 0) + 1 #type: ignore
+        return counts
+
+
+    def sample_chunks(self, n: int = 5) -> List[Chunk]:
+        return list(self.store.embedding_id_to_chunk.values())[:n]
