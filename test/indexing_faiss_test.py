@@ -52,9 +52,9 @@ def run_pipeline(input_value):
     chunks = run_phase_3_4_chunk_metadata_finalization(chunks)
 
     model = EmbeddingModelSpec(
-        model_id="test-model",
-        dimension=8,
-        provider="test",
+    model_id="sentence-transformers/all-MiniLM-L6-v2",
+    dimension=384,
+    provider="local",
     )
 
     cache = EmbeddingCache()
