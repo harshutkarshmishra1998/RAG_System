@@ -1,0 +1,4 @@
+langgraph>=0.0.46
+langchain>=0.2.0
+httpx>=0.27.0
+langchain-groq
