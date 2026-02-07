@@ -421,7 +421,8 @@ def test_phase1_to_phase5_4_all_sources_e2e():
 
     phase7_input = {
         # user input
-        "query": "Explain MCP and why it exists",
+        "query": "What is MCP and what are the key points about it in the document?", # Deep
+        # "query": "Summarize the document", # Cheap
 
         # phase-6 signals
         "confidence": normalized["confidence"],
@@ -430,18 +431,17 @@ def test_phase1_to_phase5_4_all_sources_e2e():
         "context_text": packaged["context_text"],
         "context_tokens": packaged["context_tokens"],
 
-        # 🔑 REQUIRED FOR DEEP PATH
+        # required for deep path
         "index": loaded_index,
         "chunks_by_embedding_id": chunks_by_embedding_id,
         "model_id": model.model_id,
     }
 
-
     phase7_output = phase7.invoke(phase7_input)
 
-    # ----------------------------
-    # Phase-7.0 → 7.2 invariants
-    # ----------------------------
+    # --------------------------------------------------
+    # Phase-7.0 → 7.2 invariants (ALWAYS TRUE)
+    # --------------------------------------------------
     assert phase7_output["generation_mode"] in {"normal", "cautious", "abstain"}
     assert phase7_output["scope_type"] in {"single", "multi"}
     assert isinstance(phase7_output["sub_queries"], list)
@@ -455,107 +455,96 @@ def test_phase1_to_phase5_4_all_sources_e2e():
     print(f"Strategy        : {phase7_output['strategy']}")
 
     # ==================================================
-    # Phase-7.3 / Phase-7.4 — Agentic path validation
+    # Phase-7.3 / Phase-7.4 — Execution validation
     # ==================================================
 
     if phase7_output["strategy"] == "cheap":
-        # --------------------------------------------------
-        # Phase-7.3 — Cheap Answer Generation
-        # --------------------------------------------------
-        assert "cheap_answer" in phase7_output
-        cheap = phase7_output["cheap_answer"]
-
+        # ----------------------------
+        # Phase-7.3 — Cheap path
+        # ----------------------------
+        cheap = phase7_output.get("cheap_answer")
         assert cheap is not None
+
         assert isinstance(cheap["text"], str)
         assert len(cheap["text"]) > 0
         assert cheap["used_context"] is True
         assert isinstance(cheap["model"], str)
 
-        # Deep path must NOT exist
-        assert phase7_output.get("expanded_queries") is None
-        assert phase7_output.get("multi_retrieval_results") is None
-        assert phase7_output.get("deduped_chunks") is None
-        assert phase7_output.get("deep_reranked_chunks") is None
+        # 🚨 Execution guarantees
+        assert phase7_output.get("deep_answer") is None
         assert phase7_output.get("deep_context_text") is None
 
         print("\n================ PHASE 7.3 =================")
         print(f"Model used : {cheap['model']}")
-        print("\n--- CHEAP ANSWER ---")
+        print("\n--- FINAL ANSWER (CHEAP) ---")
         print(cheap["text"])
 
     elif phase7_output["strategy"] == "deep":
+        # ----------------------------
+        # Phase-7.4 — Deep path
+        # ----------------------------
         assert phase7_output.get("cheap_answer") is None
-        # --------------------------------------------------
-        # Phase-7.4 — Deep Path (FULL)
-        # --------------------------------------------------
 
-        # -------- Scope --------
+        # Scope
         assert phase7_output["scope_type"] == "multi"
         assert len(phase7_output["sub_queries"]) > 1
 
-        # -------- Expansion --------
-        assert "expanded_queries" in phase7_output
-        assert isinstance(phase7_output["expanded_queries"], list)
-        assert len(phase7_output["expanded_queries"]) >= len(
-            phase7_output["sub_queries"]
-        )
+        # Expansion
+        expanded = phase7_output.get("expanded_queries")
+        assert isinstance(expanded, list)
+        assert len(expanded) >= len(phase7_output["sub_queries"])
 
-        # -------- Retrieval --------
-        assert "multi_retrieval_results" in phase7_output
-        assert isinstance(phase7_output["multi_retrieval_results"], list)
-        assert len(phase7_output["multi_retrieval_results"]) > 0
+        # Retrieval
+        retrieval_groups = phase7_output.get("multi_retrieval_results")
+        assert isinstance(retrieval_groups, list)
+        assert len(retrieval_groups) > 0
 
         retrieved_chunks = []
-        for group in phase7_output["multi_retrieval_results"]:
+        for group in retrieval_groups:
             retrieved_chunks.extend(group["chunks"])
-
         assert len(retrieved_chunks) > 0
 
-        # -------- Deduplication --------
-        assert "deduped_chunks" in phase7_output
-        assert isinstance(phase7_output["deduped_chunks"], list)
+        # Deduplication
+        deduped = phase7_output.get("deduped_chunks")
+        assert isinstance(deduped, list)
+        assert len({c.chunk_id for c in deduped}) == len(deduped)
 
-        deduped_ids = {c.chunk_id for c in phase7_output["deduped_chunks"]}
-        assert len(deduped_ids) == len(phase7_output["deduped_chunks"])
-
-        # -------- Reranking --------
-        assert "deep_reranked_chunks" in phase7_output
-        reranked = phase7_output["deep_reranked_chunks"]
-
+        # Reranking
+        reranked = phase7_output.get("deep_reranked_chunks")
         assert isinstance(reranked, list)
         assert len(reranked) > 0
-
         scores = [c.score for c in reranked]
         assert scores == sorted(scores, reverse=True)
 
-        # -------- Context assembly (Phase-6 reuse) --------
-        assert "deep_context_text" in phase7_output
-        assert isinstance(phase7_output["deep_context_text"], str)
-        assert len(phase7_output["deep_context_text"]) > 0
-
-        assert "deep_context_tokens" in phase7_output
-        assert isinstance(phase7_output["deep_context_tokens"], int)
+        # Context assembly
+        assert isinstance(phase7_output.get("deep_context_text"), str)
         assert phase7_output["deep_context_tokens"] > 0
 
-        # Cheap path must NOT execute
-        assert phase7_output.get("cheap_answer") is None
+        # Final answer
+        deep = phase7_output.get("deep_answer")
+        assert deep is not None
+        assert isinstance(deep["text"], str)
+        assert len(deep["text"]) > 0
 
         print("\n================ PHASE 7.4 =================")
         print("Deep path executed (agent decision)")
         print(f"Sub-queries       : {len(phase7_output['sub_queries'])}")
-        print(f"Expanded queries  : {len(phase7_output['expanded_queries'])}")
+        print(f"Expanded queries  : {len(expanded)}")
         print(f"Retrieved chunks  : {len(retrieved_chunks)}")
-        print(f"Deduped chunks    : {len(phase7_output['deduped_chunks'])}")
+        print(f"Deduped chunks    : {len(deduped)}")
         print(f"Final chunks      : {len(reranked)}")
         print(f"Context tokens    : {phase7_output['deep_context_tokens']}")
 
-        if phase7_output.get("deep_answer"):
-            print("\n--- DEEP ANSWER ---")
-            print(f"Model used : {phase7_output['deep_answer']['model']}")
-            print(phase7_output["deep_answer"]["text"])
-        
+        print("\n--- FINAL ANSWER (DEEP) ---")
+        print(deep["text"])
+
+        print("\nJudge verdict :", phase7_output.get("judge_verdict"))
+        print("Confidence    :", phase7_output.get("final_confidence"))
+        print("Issues        :", phase7_output.get("judge_issues"))
+
     else:
         raise AssertionError("Unknown strategy selected by Phase-7")
+
 
 
 

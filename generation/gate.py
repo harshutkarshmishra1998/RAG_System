@@ -19,18 +19,21 @@
 # generation/gate.py
 
 def generation_gate_phase_7_0(state: dict) -> dict:
-    context_mode = state["context_mode"]
-    confidence = state["confidence"]
+    confidence = state.get("confidence", "low")
+    context_mode = state.get("context_mode", "empty")
 
-    if context_mode == "empty":
-        mode = "abstain"
-    elif confidence == "low":
+    if confidence == "high" and context_mode == "normal":
+        mode = "normal"
+    elif confidence in {"medium", "low"}:
         mode = "cautious"
     else:
-        mode = "normal"
+        mode = "abstain"
 
-    # ✅ PRESERVE STATE
+    # 🔒 HARD CONTRACT INITIALIZATION
     return {
-        **state,
+        **state,                      # ⬅️ preserve upstream
         "generation_mode": mode,
+        "scope_type": None,
+        "sub_queries": [],
+        "strategy": None,
     }
