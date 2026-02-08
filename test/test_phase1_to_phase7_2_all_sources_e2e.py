@@ -421,8 +421,8 @@ def test_phase1_to_phase5_4_all_sources_e2e():
 
     phase7_input = {
         # user input
-        # "query": "What is MCP and what are the key points about it in the document?", # Deep
-        "query": "When should MCP not be used?", # Cheap
+        "query": "What is MCP and what are the key points about it in the document?", # Deep
+        # "query": "Summarize the document", # Cheap
 
         # phase-6 signals
         "confidence": normalized["confidence"],
@@ -478,10 +478,6 @@ def test_phase1_to_phase5_4_all_sources_e2e():
         print(f"Model used : {cheap['model']}")
         print("\n--- FINAL ANSWER (CHEAP) ---")
         print(cheap["text"])
-
-        print("\nJudge verdict :", phase7_output.get("judge_verdict"))
-        print("Confidence    :", phase7_output.get("final_confidence"))
-        print("Issues        :", phase7_output.get("judge_issues"))
 
     elif phase7_output["strategy"] == "deep":
         # ----------------------------
