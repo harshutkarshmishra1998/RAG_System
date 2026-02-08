@@ -23,10 +23,21 @@ def route_after_strategy(state: dict) -> str:
     return END
 
 
+# def route_after_judge(state: dict) -> str:
+#     # Retry ONLY triggers deep path
+#     if state.get("judge_verdict") == "retry":
+#         return "deep_expand"
+#     return END
+
 def route_after_judge(state: dict) -> str:
-    # Retry ONLY triggers deep path
-    if state.get("judge_verdict") == "retry":
+    verdict = state.get("judge_verdict")
+    confidence = state.get("final_confidence")
+
+    # Retry on explicit retry
+    if verdict == "retry" or confidence == "low":
+        state["strategy"] = "deep"
         return "deep_expand"
+
     return END
 
 def finalize_phase7_state(state: dict) -> dict:
