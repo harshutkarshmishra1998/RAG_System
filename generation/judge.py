@@ -76,30 +76,45 @@ from typing import Dict, List
 
 #     return state
 
-HARD_MAX_RETRIES = 2
+# def judge_phase_7_5(state: dict) -> dict:
+#     verdict = "pass"
+#     issues = []
 
+#     strategy = state.get("strategy")
 
-def _safe_int(value, default: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
+#     if strategy == "cheap":
+#         answer = state.get("cheap_answer", {}).get("text", "")
+#     else:
+#         answer = state.get("deep_answer", {}).get("text", "")
 
+#     if not answer or len(answer.strip()) < 30:
+#         verdict = "retry"
+#         issues.append("Answer too short")
 
-def judge_phase_7_5(state: dict) -> dict:
-    """Evaluate generated answer quality and prevent unbounded retry loops."""
-    verdict = "pass"
-    issues = []
+#     return {
+#         **state,
+#         # "judge_verdict": verdict,
+#         "judge_verdict": "retry",
+#         "judge_issues": issues,
+#         # "final_confidence": "high" if verdict == "pass" else "low",
+#         "final_confidence": "low",
+#     }
 
-    strategy = state.get("strategy")
-    retry_count = max(0, _safe_int(state.get("retry_count", 0), 0))
-    requested_max = max(0, _safe_int(state.get("max_retries", 1), 1))
-    max_retries = min(requested_max, HARD_MAX_RETRIES)
+from typing import Dict
 
-    if strategy == "cheap":
+MAX_JUDGE_RETRIES = 1  # <-- IMPORTANT
+
+def judge_phase_7_5(state: Dict) -> Dict:
+    retries = state.get("judge_retries", 0)
+
+    # Select answer
+    if state["strategy"] == "cheap":
         answer = state.get("cheap_answer", {}).get("text", "")
     else:
         answer = state.get("deep_answer", {}).get("text", "")
+
+    verdict = "pass"
+    issues = []
 
     if not answer or len(answer.strip()) < 30:
         issues.append("answer_too_short")
@@ -109,11 +124,17 @@ def judge_phase_7_5(state: dict) -> dict:
         else:
             verdict = "final_with_warning"
 
+    # 🚨 HARD STOP
+    if verdict == "retry" and retries >= MAX_JUDGE_RETRIES:
+        verdict = "pass"
+        issues.append("Max retries reached")
+
     return {
         **state,
-        "judge_verdict": verdict,
+        # "judge_verdict": verdict,
+        "judge_verdict": "retry",
         "judge_issues": issues,
-        "final_confidence": "high" if verdict == "pass" else "low",
-        "retry_count": retry_count,
-        "max_retries": max_retries,
+        "judge_retries": retries + 1,
+        # "final_confidence": "high" if verdict == "pass" else "low",
+        "final_confidence": "low",
     }

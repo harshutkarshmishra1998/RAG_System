@@ -25,6 +25,11 @@
 # generation/strategy.py
 
 def select_strategy_phase_7_2(state: dict) -> dict:
+    if state.get("judge_retries", 0) > 0:
+        return {
+            **state,
+            "strategy": "deep",
+        }
     confidence = state["confidence"]
     scope_type = state["scope_type"]
     num_chunks = state["num_chunks"]
