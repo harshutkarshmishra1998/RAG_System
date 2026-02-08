@@ -31,6 +31,7 @@ def judge_phase_7_5(state: Dict) -> Dict:
 
     return {
         **state,
+        "strategy": next_strategy,
         "judge_verdict": verdict,
         "judge_issues": issues,
         "judge_retries": retries+1,

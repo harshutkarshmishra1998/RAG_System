@@ -15,6 +15,12 @@ from generation.deep.answer import deep_answer_generation_phase_7_4_6
 from generation.judge import judge_phase_7_5
 
 
+def _coerce_int(value, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
 def route_after_strategy(state: dict) -> str:
     if state["strategy"] == "cheap":
         return "cheap_generate"
