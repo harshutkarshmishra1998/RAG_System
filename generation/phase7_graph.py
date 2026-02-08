@@ -29,17 +29,22 @@ def route_after_strategy(state: dict) -> str:
     return END
 
 
+# def route_after_judge(state: dict) -> str:
+#     # Retry ONLY triggers deep path
+#     if state.get("judge_verdict") == "retry":
+#         return "deep_expand"
+#     return END
+
 def route_after_judge(state: dict) -> str:
-    # Retry only if budget remains; otherwise force stop.
-    if state.get("judge_verdict") != "retry":
-        return END
+    verdict = state.get("judge_verdict")
+    confidence = state.get("final_confidence")
 
-    retry_count = max(0, _coerce_int(state.get("retry_count", 0), 0))
-    max_retries = max(0, _coerce_int(state.get("max_retries", 1), 1))
-    if retry_count >= max_retries:
-        return END
+    # Retry on explicit retry
+    if verdict == "retry" or confidence == "low":
+        state["strategy"] = "deep"
+        return "deep_expand"
 
-    return "deep_expand"
+    return END
 
 def finalize_phase7_state(state: dict) -> dict:
     return {
