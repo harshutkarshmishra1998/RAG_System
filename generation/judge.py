@@ -117,8 +117,12 @@ def judge_phase_7_5(state: Dict) -> Dict:
     issues = []
 
     if not answer or len(answer.strip()) < 30:
-        verdict = "retry"
-        issues.append("Answer too short")
+        issues.append("answer_too_short")
+        if retry_count < max_retries:
+            verdict = "retry"
+            retry_count += 1
+        else:
+            verdict = "final_with_warning"
 
     # 🚨 HARD STOP
     if verdict == "retry" and retries >= MAX_JUDGE_RETRIES:
@@ -134,4 +138,3 @@ def judge_phase_7_5(state: Dict) -> Dict:
         # "final_confidence": "high" if verdict == "pass" else "low",
         "final_confidence": "low",
     }
-
