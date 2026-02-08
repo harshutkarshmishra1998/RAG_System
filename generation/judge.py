@@ -76,25 +76,49 @@ from typing import Dict, List
 
 #     return state
 
+HARD_MAX_RETRIES = 2
+
+
+def _safe_int(value, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def judge_phase_7_5(state: dict) -> dict:
+    """Evaluate generated answer quality and prevent unbounded retry loops."""
     verdict = "pass"
     issues = []
 
     strategy = state.get("strategy")
+    retry_count = max(0, _safe_int(state.get("retry_count", 0), 0))
+    requested_max = max(0, _safe_int(state.get("max_retries", 1), 1))
+    max_retries = min(requested_max, HARD_MAX_RETRIES)
 
     if strategy == "cheap":
         answer = state.get("cheap_answer", {}).get("text", "")
     else:
         answer = state.get("deep_answer", {}).get("text", "")
 
+    next_strategy = strategy
+
     if not answer or len(answer.strip()) < 30:
-        verdict = "retry"
-        issues.append("Answer too short")
+        issues.append("answer_too_short")
+        if retry_count < max_retries:
+            verdict = "retry"
+            retry_count += 1
+            if strategy == "cheap":
+                next_strategy = "deep"
+        else:
+            verdict = "final_with_warning"
 
     return {
         **state,
+        "strategy": next_strategy,
         "judge_verdict": verdict,
         "judge_issues": issues,
         "final_confidence": "high" if verdict == "pass" else "low",
+        "retry_count": retry_count,
+        "max_retries": max_retries,
     }
-
